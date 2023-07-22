@@ -1,0 +1,164 @@
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Service Configuration
+        Parameters:
+          - EnvCode
+          - ServiceName
+      - Label:
+          default: Vpc Configuration
+        Parameters:
+          - VpcID
+          - SubnetIds
+      - Label:
+          default: Network Configuration
+        Parameters:
+          - IsPubliclyAccessible
+      - Label:
+          default: Resource Configuration
+        Parameters:
+          - CPU
+          - Memory
+      - Label:
+          default: AutoScaling Configuration
+        Parameters:
+          - MaxConcurrency
+          - MinSize
+          - MaxSize
+      - Label:
+          default: Image Configuration
+        Parameters:
+          - ImageIdentifier
+      - Label:
+          default: Service Configuration
+        Parameters:
+          - PostgresEndpoint
+
+Parameters:
+  EnvCode:
+    Description: An environment name that will be part to resource names.
+    Type: String
+    Default: dev
+    AllowedValues:
+      - prod
+      - dev
+  ServiceName:
+    Type: String
+    Default: "apprunner-test"
+  VpcID:
+    Type: String
+    Default: "vpc-e6f01782"
+  SubnetIds:
+    Description: Comma-delimited list of security group IDs to associate with the EC2 instance.
+    Type: String
+    Default: "subnet-8cdf02e8, subnet-fd27e88b"
+  CPU:
+    Type: String
+    AllowedPattern: "1024|2048|(1|2) vCPU"
+    Default: "1 vCPU"
+  Memory:
+    Type: String
+    AllowedPattern: "2048|3072|4096|(2|3|4) GB"
+    Default: "2 GB"
+  MaxConcurrency:
+    Type: Number
+    Default: 100
+  MaxSize:
+    Type: Number
+    Default: 1
+  MinSize:
+    Type: Number
+    Default: 1
+  IsPubliclyAccessible:
+    Type: String
+    Default: true
+    AllowedValues:
+      - true
+      - false
+  ImageIdentifier:
+    Type: String
+    Default: xxxx.dkr.ecr.ap-southeast-1.amazonaws.com/apprunner-test:latest
+  PostgresEndpoint:
+    Type: String
+    Default: database-1.xxxxxxxx.ap-xxxxxxxx-1.rds.amazonaws.com
+
+Resources:
+  AppRunnerAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - build.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+
+  AppRunnerInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: tasks.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess
+
+  AppRunnerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VpcID
+      GroupName: !Sub ${ServiceName}-${EnvCode}-app-runner-sg
+      GroupDescription: "for App Runner"
+
+  VpcConnector:
+    Type: AWS::AppRunner::VpcConnector
+    Properties:
+      VpcConnectorName: !Sub ${ServiceName}-${EnvCode}-vpc-connector
+      Subnets: !Split [",", !Ref SubnetIds]
+      SecurityGroups:
+        - !Ref AppRunnerSecurityGroup
+
+  AppRunnerAutoScalingConfiguration:
+    Type: AWS::AppRunner::AutoScalingConfiguration
+    Properties:
+      MaxConcurrency: !Ref MaxConcurrency
+      MaxSize: !Ref MaxSize
+      MinSize: !Ref MinSize
+
+  AppRunnerService:
+    Type: AWS::AppRunner::Service
+    Properties:
+      AutoScalingConfigurationArn: !GetAtt AppRunnerAutoScalingConfiguration.AutoScalingConfigurationArn
+      InstanceConfiguration:
+        Cpu: !Ref CPU
+        Memory: !Ref Memory
+        InstanceRoleArn: !GetAtt AppRunnerInstanceRole.Arn
+      NetworkConfiguration:
+        IngressConfiguration:
+          IsPubliclyAccessible: !Ref IsPubliclyAccessible
+        EgressConfiguration:
+          EgressType: VPC
+          VpcConnectorArn: !GetAtt VpcConnector.VpcConnectorArn
+      ServiceName: !Sub ${ServiceName}-${EnvCode}
+      SourceConfiguration:
+        AuthenticationConfiguration:
+          AccessRoleArn: !GetAtt AppRunnerAccessRole.Arn
+        AutoDeploymentsEnabled: true
+        ImageRepository:
+          ImageRepositoryType: ECR
+          ImageIdentifier: !Ref ImageIdentifier
+          ImageConfiguration:
+            Port: 8080
+            RuntimeEnvironmentVariables:
+              - Name: POSTGRES_ENDPOINT
+                Value: !Ref PostgresEndpoint
+            RuntimeEnvironmentSecrets:
+              - Name: POSTGRES_PASSWORD
+                Value: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/POSTGRES_PASSWORD"
