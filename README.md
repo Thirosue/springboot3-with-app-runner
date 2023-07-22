@@ -30,6 +30,32 @@ gradlew.bat bootRun
 ./gradlew clean build -x test
 ```
 
+## Docker Build
+
+- build
+
+```bash
+./gradlew clean build -x test
+```
+
+- copy
+
+```
+cp build/libs/*.jar docker/
+```
+
+- change directory
+
+```bash
+cd docker
+```
+
+- build
+
+```bash
+docker build -t apprunner-test .
+```
+
 ## Run Server
 
 ```bash
